@@ -4,13 +4,16 @@
 
 Termux-bai 是基于 Termux 官方工程架构进行长期维护的二次构建项目。
 
+当前 App 基线固定为 **Termux `v0.119.0-beta.3`**。该版本是 Termux-bai 第一阶段的官方上游基线，不代表项目以后不能升级。
+
 核心原则：
 
 - 保留 Termux 官方的核心工程边界和运行机制。
-- 二次开发集中在独立的定制层，尽量避免把定制逻辑散落到上游核心代码。
-- App、Bootstrap、Packages、Repository、Plugins、CI/CD 分层维护。
+- 二次开发集中在独立的定制层，避免把定制逻辑散落到上游核心代码。
+- App、Shared、Bootstrap、Packages、Repository、Plugins、CI/CD 分层维护。
 - 所有与上游的修改保持可追踪、可同步、可回退。
-- 如果修改应用包名或运行时身份，则同步构建匹配的 Bootstrap 和软件包，禁止混用不匹配的官方二进制环境。
+- 如果修改应用包名、前缀或其他运行时身份配置，则同步构建匹配的 Bootstrap 和软件包，禁止混用不匹配的官方二进制环境。
+- 项目必须从第一天开始具备上游升级能力。
 
 目标不是制作一个一次性修改版 APK，而是建立一个可以长期跟随 Termux upstream 演进的完整发行工程。
 
@@ -34,42 +37,12 @@ Termux-bai
 │   └── ui/
 │
 ├── shared/                      # 公共代码/兼容层
-│
-├── bootstrap/                   # 各架构 Bootstrap 构建结果
-│   ├── aarch64/
-│   ├── arm/
-│   ├── x86_64/
-│   └── i686/
-│
-├── packages/                   # Termux packages 定制层
-│   ├── bash/
-│   ├── coreutils/
-│   ├── apt/
-│   ├── git/
-│   ├── python/
-│   ├── nodejs/
-│   └── custom/
-│
+├── bootstrap/                   # 各架构 Bootstrap 构建与验证
+├── packages/                    # Termux packages 定制层
 ├── repository/                  # 自有 APT 仓库生成层
-│   ├── packages/
-│   ├── Packages/
-│   └── release/
-│
 ├── plugins/                     # 插件/扩展
-│
 ├── customization/               # Termux-bai 二改功能
-│   ├── ui/
-│   ├── terminal/
-│   ├── theme/
-│   ├── keyboard/
-│   ├── prompt/
-│   ├── settings/
-│   ├── shell/
-│   └── defaults/
-│
 ├── patches/                     # 严格版本化的上游补丁
-│   └── <upstream-version>/
-│
 ├── build/                       # 构建脚本、环境与检查
 ├── tests/                       # 测试
 ├── .github/workflows/           # CI/CD
@@ -99,7 +72,7 @@ Termux-bai 原则上保留官方 App 的职责边界，只在明确的二改模�
 
 ### 3.2 termux-shared
 
-公共 Android/Termux 代码放在 shared 层。
+公共 Android/Termux 代码保持独立的 shared 层。
 
 主要包括：
 
@@ -115,7 +88,9 @@ Termux-bai 原则上保留官方 App 的职责边界，只在明确的二改模�
 
 ### 3.3 termux-packages
 
-负责 Termux 用户空间软件包：
+`termux-packages` 是 Termux 用户空间软件包及其构建系统的上游工程，不是另一个 APK。
+
+它负责构建例如：
 
 ```text
 bash
@@ -132,7 +107,7 @@ openssh
 ...
 ```
 
-软件包不是简单复制到 APK 中，而是通过 Termux packages 构建系统产生对应架构的包和 Bootstrap。
+软件包通过官方 packages 构建体系产生对应架构的 `.deb` 包以及 Bootstrap 所需的基础环境。
 
 ---
 
@@ -149,9 +124,9 @@ Bootstrap
  ├── bash
  ├── coreutils
  ├── apt
- ├── libc / linker 相关运行环境
- ├── 基础库
- └── 初始命令
+ ├── 基础运行库
+ ├── 基础命令
+ └── 初始化环境
  │
  ▼
 $PREFIX
@@ -165,7 +140,7 @@ $PREFIX
 
 支持的 Android CPU 架构必须分别构建并验证。
 
-重点原则：如果 Termux-bai 使用不同的应用包名、前缀或其他身份相关配置，就必须构建与其匹配的 Bootstrap 和 Packages；不能把官方 `com.termux` 环境的二进制包直接当作 Termux-bai 的完整发行环境。
+如果 Termux-bai 使用不同的 applicationId、前缀或其他身份相关配置，就必须构建与其匹配的 Bootstrap 和 Packages；不能把官方 `com.termux` 环境的二进制包直接作为 Termux-bai 的完整发行环境。
 
 ---
 
@@ -175,7 +150,7 @@ Packages 分成三类：
 
 ### A. 官方同步包
 
-尽量直接跟随 upstream，仅在必要时打补丁。
+尽量跟随 upstream，仅在必要时使用版本化补丁。
 
 ### B. Termux-bai 定制包
 
@@ -206,28 +181,26 @@ package build
    ↓
 APT metadata
    ↓
-Repository
-   ↓
-Termux-bai apt
+Termux-bai Repository
 ```
 
 Repository 应支持：
 
 - Packages
-- Packages.xz / 压缩索引
+- Packages.xz 等压缩索引
 - Release metadata
 - 版本管理
 - 架构区分
 - 校验
 - 发布记录
 
-这样以后 Termux-bai 可以独立发布自己的软件包，而不需要重新发布整个 APK。
+这样 Termux-bai 可以独立发布软件包，而不需要每次重新发布整个 APK。
 
 ---
 
 ## 7. 二改层
 
-所有用户体验和项目专属功能优先放到 `customization/`。
+所有用户体验和项目专属功能优先放到 `customization/`，尽量通过独立模块或版本化 patch 接入。
 
 ### UI
 
@@ -289,7 +262,7 @@ Prompt 系统必须独立于 UI 设置逻辑。
 
 ## 8. Ubuntu / Proot / 开发环境集成原则
 
-Termux-bai 本体不应该把 Ubuntu、Pi、PM2、MCP 等大型用户空间项目硬编码进 Android 核心。
+Termux-bai 本体不把 Ubuntu、Pi、PM2、MCP 等大型用户空间项目硬编码进 Android 核心。
 
 采用：
 
@@ -312,7 +285,7 @@ Termux 用户空间
 
 App 提供入口、管理和配置能力；具体开发工具仍由 `$PREFIX` / Ubuntu 用户空间负责。
 
-这样可以保持 Termux 本体干净，同时让 Termux-bai 成为完整移动开发环境。
+这样保持 Termux 本体干净，同时允许 Termux-bai 成为完整移动开发环境。
 
 ---
 
@@ -339,7 +312,7 @@ Termux $PREFIX
        └── 浏览器访问本地服务
 ```
 
-需要特别避免：
+避免：
 
 - 把 MCP 服务直接写进 Termux Android 核心。
 - 把 PM2 生命周期强行绑定到 TerminalView。
@@ -349,47 +322,94 @@ Termux $PREFIX
 
 ---
 
-## 10. 上游同步策略
+## 10. 上游同步与升级策略
 
 Termux-bai 不直接复制一个版本后永久脱离 upstream。
 
 采用：
 
 ```text
-Upstream
-   │
-   ▼
-版本同步
-   │
-   ▼
-Termux-bai patch
-   │
-   ├── 官方修改
-   ├── Termux-bai 修改
-   └── 冲突检查
-   │
-   ▼
+Official upstream
+      │
+      ▼
+Version pin
+      │
+      ▼
+Termux-bai patches
+      │
+      ├── 官方修改
+      ├── Termux-bai 修改
+      └── 冲突检查
+      │
+      ▼
 Build
-   │
-   ▼
+      │
+      ▼
 Test
-   │
-   ▼
+      │
+      ▼
 Release
+      │
+      ▼
+下一官方版本
 ```
 
-每个重大上游版本使用独立补丁目录：
+### 当前基线
+
+```text
+termux-app: v0.119.0-beta.3
+```
+
+`termux-packages` 不简单永久跟随 `master`；在正式构建时必须锁定与当前 App/Bootstrap 兼容的 packages 构建基线，并记录对应 commit/tag。
+
+### 版本目录
+
+推荐：
 
 ```text
 patches/
-└── 0.x.x/
-    ├── app.patch
-    ├── shared.patch
-    ├── build.patch
-    └── customization.patch
+└── 0.119.0-beta.3/
+    ├── app/
+    ├── shared/
+    ├── packages/
+    └── build/
 ```
 
-禁止跨版本直接套补丁。
+升级到新版本时建立新的版本目录，例如：
+
+```text
+patches/
+├── 0.119.0-beta.3/
+└── 0.120.x/
+```
+
+禁止跨版本直接套用未验证的 patch。
+
+### 升级流程
+
+```text
+新 upstream
+   ↓
+记录 App commit/tag
+   ↓
+记录 packages commit/tag
+   ↓
+建立新版本基线
+   ↓
+重新应用 Termux-bai patches
+   ↓
+自动检测冲突
+   ↓
+重新构建 Bootstrap
+   ↓
+重新构建 Packages
+   ↓
+测试 APK / Runtime / APT
+   ↓
+生成 Release
+```
+
+因此 `v0.119.0-beta.3` 是起点，不是终点。后续官方升级应通过“新基线 + 新 patch + 完整构建验证”完成，而不是手工覆盖旧工程。
 
 ---
 
@@ -401,7 +421,6 @@ patches/
 main
  │
  ├── stable
- │
  └── develop
 
 upstream/*
@@ -416,7 +435,7 @@ feature/*
 原则：
 
 - `main` 始终保持可构建。
-- 大功能单独 feature branch。
+- 大功能使用独立 feature branch。
 - 上游同步单独处理。
 - 发布版本打 Git tag。
 - 每次重要修改必须留下明确 commit。
@@ -453,12 +472,7 @@ Checksum
 Release
 ```
 
-至少覆盖：
-
-- aarch64
-- arm
-- x86_64
-- i686（如果目标版本仍支持）
+至少覆盖目标 Android CPU 架构，并在项目确认支持范围后固定架构矩阵。
 
 发布前必须验证：
 
@@ -500,7 +514,7 @@ Release 必须提供：
 
 ---
 
-## 14. 推荐的最终目录
+## 14. 推荐目录
 
 ```text
 Termux-bai/
@@ -530,24 +544,19 @@ Termux-bai/
 
 ---
 
-## 15. 实施顺序
-
-不要一开始就大规模修改 Terminal UI。
-
-推荐顺序：
+## 15. 实施阶段
 
 ### Phase 1 — 官方基线
 
-- 固定 upstream 版本
-- 导入 termux-app
-- 导入 termux-packages
+- 固定 `termux-app v0.119.0-beta.3`
+- 确认匹配的 `termux-packages` 构建基线
 - 建立构建环境
-- 完成原版构建
+- 完成原版构建验证
 
 ### Phase 2 — 身份与 Bootstrap
 
 - 确定 applicationId
-- 确定包名策略
+- 确定包名/前缀策略
 - 构建对应 Bootstrap
 - 构建对应 Packages
 - 建立 APT Repository
