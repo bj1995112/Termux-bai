@@ -1,0 +1,45 @@
+name: Upstream sync and APK build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Upstream termux-app ref to build'
+        required: true
+        default: 'v0.119.0-beta.3'
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Termux-bai
+        uses: actions/checkout@v4
+
+      - name: Checkout official termux-app
+        uses: actions/checkout@v4
+        with:
+          repository: termux/termux-app
+          ref: ${{ inputs.ref || 'v0.119.0-beta.3' }}
+          path: upstream/termux-app
+          fetch-depth: 1
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build official baseline APK
+        working-directory: upstream/termux-app
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK output
+        run: test -n "$(find upstream/termux-app -type f -name '*.apk' -print -quit)"
