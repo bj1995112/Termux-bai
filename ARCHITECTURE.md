@@ -13,6 +13,7 @@ Termux-bai 是基于 Termux 官方工程架构进行长期维护的二次构建�
 - App、Shared、Bootstrap、Packages、Repository、Plugins、CI/CD 分层维护。
 - 所有与上游的修改保持可追踪、可同步、可回退。
 - 如果修改应用包名、前缀或其他运行时身份配置，则同步构建匹配的 Bootstrap 和软件包，禁止混用不匹配的官方二进制环境。
+- 如果最终使用自定义 `TERMUX_APP_PACKAGE` / applicationId 形成独立发行版，则必须使用与该发行版身份匹配的自有 APT Repository，不能直接把官方 `com.termux` 软件仓库主机作为最终发行版仓库。
 - 项目必须从第一天开始具备上游升级能力。
 
 目标不是制作一个一次性修改版 APK，而是建立一个可以长期跟随 Termux upstream 演进的完整发行工程。
@@ -39,7 +40,7 @@ Termux-bai
 ├── shared/                      # 公共代码/兼容层
 ├── bootstrap/                   # 各架构 Bootstrap 构建与验证
 ├── packages/                    # Termux packages 定制层
-├── repository/                  # APT 仓库集成/发布配置层
+├── repository/                  # Termux-bai APT 仓库构建/发布/配置层
 ├── plugins/                     # 插件/扩展
 ├── customization/               # Termux-bai 二改功能
 ├── patches/                     # 严格版本化的上游补丁
@@ -150,7 +151,7 @@ Packages 分成三类：
 
 ### A. 官方同步包
 
-尽量跟随 upstream，仅在必要时使用版本化补丁。
+以 upstream 为主要来源，经过 Termux-bai 自己的构建流程重新生成适配本发行版的 `.deb` 包。
 
 ### B. Termux-bai 定制包
 
@@ -170,36 +171,106 @@ Packages 分成三类：
 
 ## 6. APT Repository 层
 
-### 6.1 默认策略
+### 6.1 核心发行策略
 
-**Termux-bai 默认直接使用官方 Termux APT Repository，不维护独立的 Termux-bai APT 仓库。**
+**Termux-bai 如果最终使用自定义 `TERMUX_APP_PACKAGE` / applicationId 作为独立发行版身份，则必须维护自己的 APT Repository。**
 
-这是当前项目的明确架构决策。
+APT Repository 不再被视为可以简单复用官方 `com.termux` 仓库主机的外部依赖，而是 Termux-bai 发行体系的一部分。
 
 ```text
-Termux-bai
-    │
-    ├── App 二次开发
-    ├── Bootstrap 二次构建
-    └── Packages
-          │
-          ▼
-    官方 Termux APT Repository
-          │
-          ├── bash
-          ├── coreutils
-          ├── apt
-          ├── git
-          ├── python
-          ├── nodejs
-          └── ...
+Termux-bai App
+      │
+      │ 自定义 TERMUX_APP_PACKAGE
+      ▼
+Termux-bai Bootstrap
+      │
+      ▼
+Termux-bai Packages
+      │
+      ▼
+Termux-bai APT Repository
+      │
+      ├── main
+      ├── root
+      └── x11
 ```
 
-这样可以最大限度保留 Termux 官方软件生态，同时让 Termux-bai 的二改集中在 App、Bootstrap 和必要的定制层，不把项目变成一套需要长期维护完整软件仓库的独立发行版。
+官方 `termux-packages` 仍然是重要的**上游软件包构建来源**，但最终发布给 Termux-bai 用户的软件包，应经过 Termux-bai 自己的构建、适配、签名和仓库发布流程。
 
-### 6.2 兼容性要求
+也就是说：
 
-Termux-bai 必须保持标准 APT/pkg 使用方式：
+> **可以使用官方 Termux Packages 作为上游来源，但不能把官方 `com.termux` APT Repository 直接当作自定义 Termux-bai 发行版的最终仓库。**
+
+### 6.2 为什么自定义包名后必须独立处理 Repository
+
+Termux-bai 最终不是 `com.termux` 本身，而是拥有自己的 applicationId / `TERMUX_APP_PACKAGE` 的独立发行版。
+
+因此必须确保以下组件属于同一个发行体系：
+
+```text
+Application ID
+      │
+      ├── Bootstrap
+      ├── Packages
+      ├── APT Repository
+      ├── 包签名
+      └── Release metadata
+```
+
+不能形成：
+
+```text
+Termux-bai App
+      ↓
+自定义 Bootstrap
+      ↓
+官方 com.termux APT Repository
+      ↓
+未经适配的官方二进制包
+```
+
+否则会把不同发行身份、路径、构建配置和二进制兼容边界混在一起，破坏长期可维护性。
+
+### 6.3 官方工程与 Termux-bai Repository 的关系
+
+推荐关系为：
+
+```text
+Official termux-packages
+          │
+          │ upstream source
+          ▼
+   Termux-bai packages
+          │
+          ├── 官方同步包
+          ├── Termux-bai 定制包
+          └── 必要适配/patch
+          │
+          ▼
+ Termux-bai APT Repository
+```
+
+这样既保留官方软件生态和构建体系，又确保最终发行版的软件包由 Termux-bai 自己控制。
+
+### 6.4 APT Repository 需要负责什么
+
+`repository/` 层负责：
+
+- Repository URL / channel 配置
+- `main` / `root` / `x11` 等仓库组织
+- `.deb` 包发布
+- Packages 索引生成
+- Release metadata
+- 仓库签名
+- 架构管理
+- 版本发布
+- 镜像/静态托管配置
+- Repository 完整性验证
+- 与 Bootstrap / Packages 的版本对应关系
+
+### 6.5 用户侧行为保持不变
+
+虽然仓库改为 Termux-bai 自己的 Repository，用户侧仍保持标准 Termux 使用方式：
 
 ```bash
 pkg update
@@ -207,47 +278,57 @@ pkg upgrade
 pkg install git
 ```
 
-官方仓库中的软件可以继续正常安装和升级。
+用户不需要了解 Repository 的内部构建过程。
 
-但如果 Termux-bai 修改了 applicationId、前缀、ABI、运行时路径或其他会影响二进制兼容性的内容，仍必须构建与 Termux-bai 匹配的 Bootstrap 和软件包；**“使用官方 APT Repository”不等于可以无条件混用官方 `com.termux` 的本地二进制运行环境。**
+### 6.6 当前阶段的实施方式
 
-### 6.3 Termux-bai 定制包
+第一阶段不需要从零创造所有软件包的内容。
 
-如果未来需要发布 Termux-bai 自己的软件包，不直接替换官方仓库，而采用叠加方式：
+采用：
 
 ```text
-官方 Termux APT Repository
-            +
-Termux-bai APT Repository（未来按需启用）
+官方 termux-packages
+        │
+        ▼
+Termux-bai fork / 同步
+        │
+        ▼
+Termux-bai 构建
+        │
+        ▼
+Termux-bai APT Repository
 ```
 
-未来自有仓库可以用于发布：
+这样可以最大程度复用官方构建脚本、配方、补丁和软件包生态，同时建立自己的最终发布渠道。
 
-- Termux-bai 专属工具
-- WebUI 组件
-- 项目管理工具
-- AI/MCP 辅助组件
-- Termux-bai 专属运行时
+### 6.7 与官方仓库的边界
 
-因此当前 `repository/` 目录的职责不是强制维护一个独立仓库，而是保留 **APT Repository 集成、配置、验证以及未来自有仓库扩展的架构位置**。
+**禁止把“可以使用官方 packages 源码”理解成“可以直接使用官方 Repository”。**
 
-### 6.4 不采用独立仓库的原因
+二者明确区分：
 
-当前阶段不自行维护完整 APT Repository，可以避免额外承担：
+| 项目 | Termux-bai 策略 |
+|---|---|
+| 官方 `termux-packages` 源码 | 作为上游来源并同步 |
+| 官方 package recipes | 尽量复用 |
+| 官方构建系统 | 尽量复用 |
+| 官方 `com.termux` APT Repository | 不作为最终发行仓库 |
+| Termux-bai APT Repository | 必须建立并维护 |
+| Termux-bai `.deb` | 由 Termux-bai 构建并发布 |
+| Termux-bai Repository 签名 | 自己维护 |
 
-- 大量软件包的持续构建
-- 多架构包维护
-- 包签名
-- Packages 索引生成
-- Release metadata
-- 镜像与 CDN
-- 安全更新同步
-- 上游软件版本同步
-- 软件包依赖维护
+### 6.8 未来扩展
 
-因此 Termux-bai 当前采用：
+未来可以继续增加：
 
-> **官方仓库负责通用软件生态，Termux-bai 负责二次构建和项目专属能力。**
+```text
+Termux-bai APT Repository
+├── stable
+├── beta
+└── edge
+```
+
+并根据 Termux-bai 自身版本建立对应的软件包发布通道。
 
 ---
 
@@ -457,6 +538,8 @@ patches/
    ↓
 重新构建 Packages
    ↓
+发布到 Termux-bai APT Repository
+   ↓
 测试 APK / Runtime / APT
    ↓
 生成 Release
@@ -512,6 +595,8 @@ Build Bootstrap
  ↓
 Build Packages
  ↓
+Build APT Repository
+ ↓
 Unit Test
  ↓
 Integration Test
@@ -533,12 +618,13 @@ Release
 2. Bootstrap 初始化
 3. `$PREFIX` 正常
 4. `apt` 正常
-5. 基础命令正常
-6. 网络正常
-7. shell 正常
-8. Terminal 正常
-9. Settings 正常
-10. 插件/Intent 正常
+5. APT Repository 可访问
+6. 基础命令正常
+7. 网络正常
+8. shell 正常
+9. Terminal 正常
+10. Settings 正常
+11. 插件/Intent 正常
 
 ---
 
@@ -555,6 +641,8 @@ Release
 
 所有 CI/CD secrets 使用 GitHub Secrets。
 
+Repository signing key 必须独立于个人开发环境保存，并通过安全的 CI/CD secret 或专用发布环境使用。
+
 Release 必须提供：
 
 - APK
@@ -564,6 +652,7 @@ Release 必须提供：
 - 已知问题
 - 上游版本
 - Termux-bai 修改列表
+- 对应 APT Repository channel / 版本信息
 
 ---
 
@@ -606,13 +695,15 @@ Termux-bai/
 - 建立构建环境
 - 完成原版构建验证
 
-### Phase 2 — 身份与 Bootstrap
+### Phase 2 — 身份、Bootstrap 与 Repository
 
 - 确定 applicationId
-- 确定包名/前缀策略
+- 确定 `TERMUX_APP_PACKAGE` / 包名策略
 - 构建对应 Bootstrap
 - 构建对应 Packages
-- 接入并验证官方 APT Repository
+- 建立 Termux-bai APT Repository
+- 配置 Repository 签名和发布结构
+- 验证 `pkg update / pkg upgrade / pkg install`
 
 ### Phase 3 — 二改基础层
 
@@ -644,6 +735,7 @@ Termux-bai/
 - 自动构建
 - 自动测试
 - 自动签名
+- APT Repository 自动发布
 - Release
 - 上游同步
 
@@ -668,7 +760,7 @@ Termux-bai 最终不是“修改版 Termux APK”，而是一套完整的移动�
           │            │            │
           └────────────┼────────────┘
                        ▼
-             Official APT Repository
+             Termux-bai APT Repository
                        │
                        ▼
               Termux-bai Runtime
@@ -682,4 +774,4 @@ Termux-bai 最终不是“修改版 Termux APK”，而是一套完整的移动�
                 Pi      PM2      MCP/WebUI
 ```
 
-核心原则：**官方结构不乱、二改功能集中、Bootstrap/Packages 匹配、默认使用官方 APT Repository、未来可叠加自有仓库、上游可同步、版本可回退、构建可重复、发布可验证。**
+核心原则：**官方结构不乱、二改功能集中、Bootstrap/Packages 匹配、使用官方 `termux-packages` 作为上游来源、建立并维护 Termux-bai 自有 APT Repository、上游可同步、版本可回退、构建可重复、发布可验证。**
